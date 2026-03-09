@@ -32,6 +32,7 @@
 #include <sched.h>
 
 #include "os-impl-tasks.h"
+#include "os-posix-stepping.h"
 
 #include "os-shared-task.h"
 #include "os-shared-idmap.h"
@@ -728,6 +729,10 @@ int32 OS_TaskDelay_Impl(uint32 millisecond)
 {
     struct timespec sleep_end;
     int             status;
+
+#ifdef CFE_SIM_STEPPING
+    OS_PosixStepping_Hook_TaskDelay(millisecond);
+#endif
 
     clock_gettime(CLOCK_MONOTONIC, &sleep_end);
     sleep_end.tv_sec += millisecond / 1000;

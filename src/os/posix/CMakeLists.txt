@@ -88,6 +88,12 @@ else ()
     )
 endif ()
 
+if (CFE_SIM_STEPPING)
+    list(APPEND POSIX_IMPL_SRCLIST
+        src/os-posix-stepping.c
+    )
+endif ()
+
 # Defines an OBJECT target named "osal_posix_impl" with selected source files
 add_library(osal_posix_impl OBJECT
     ${POSIX_BASE_SRCLIST}

@@ -33,6 +33,7 @@
 #include "os-shared-idmap.h"
 #include "os-shared-binsem.h"
 #include "os-impl-binsem.h"
+#include "os-posix-stepping.h"
 
 /*
  * This controls the maximum time that the calling thread will wait to
@@ -367,10 +368,14 @@ static int32 OS_GenericBinSemTake_Impl(const OS_object_token_t *token, const str
 
     sem = OS_OBJECT_TABLE_GET(OS_impl_bin_sem_table, *token);
 
+#ifdef CFE_SIM_STEPPING
+    OS_PosixStepping_Hook_BinSemTake();
+#endif
+
     /*
-     * Note - this lock should be quickly available - should not delay here.
-     * The main delay is in the pthread_cond_wait() below.
-     */
+      * Note - this lock should be quickly available - should not delay here.
+      * The main delay is in the pthread_cond_wait() below.
+      */
     /* Lock the mutex ( not the table! ) */
     if (OS_Posix_BinSemAcquireMutex(&sem->id) != OS_SUCCESS)
     {

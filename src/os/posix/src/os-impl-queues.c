@@ -31,6 +31,7 @@
 #include "bsp-impl.h"
 
 #include "os-impl-queues.h"
+#include "os-posix-stepping.h"
 #include "os-shared-queue.h"
 #include "os-shared-idmap.h"
 
@@ -194,9 +195,13 @@ int32 OS_QueueGet_Impl(const OS_object_token_t *token, void *data, size_t size, 
 
     impl = OS_OBJECT_TABLE_GET(OS_impl_queue_table, *token);
 
+#ifdef CFE_SIM_STEPPING
+    OS_PosixStepping_Hook_QueueReceive();
+#endif
+
     /*
-     ** Read the message queue for data
-     */
+      ** Read the message queue for data
+      */
     sizeCopied = -1;
     if (timeout == OS_PEND)
     {
