@@ -34,6 +34,11 @@ target_link_libraries(osal_public_api INTERFACE
 # Confirming this reduces risk of accidental misconfiguration
 set_property(TARGET osal_generic-linux_impl PROPERTY OSAL_EXPECTED_OSTYPE "posix")
 
+# Link ESA public API when simulation stepping is enabled
+if (CFE_SIM_STEPPING)
+    target_link_libraries(osal_generic-linux_impl PUBLIC esa_public_api)
+endif()
+
 # Configure the ut_coverage_compile and ut_coverage_link for enabling coverage
 # testing on this platform.
 if (NOT CMAKE_CROSSCOMPILING AND ENABLE_UNIT_TESTS)
