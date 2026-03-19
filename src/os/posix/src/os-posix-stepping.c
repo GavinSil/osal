@@ -30,6 +30,8 @@
 #ifdef CFE_SIM_STEPPING
 
 #include <stdint.h>
+#include "cfe_psp_sim_stepping_shim.h"
+#include "cfe_psp_sim_stepping.h"
 
 /****************************************************************************************
                                   STEPPING HOOK IMPLEMENTATIONS

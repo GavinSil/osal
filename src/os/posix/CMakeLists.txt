@@ -103,6 +103,12 @@ add_library(osal_posix_impl OBJECT
 target_include_directories(osal_posix_impl PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/inc
 )
+
+# When stepping is enabled, link to ESA public API for stepping headers
+if (CFE_SIM_STEPPING)
+    target_link_libraries(osal_posix_impl PUBLIC esa_public_api)
+endif()
+
 target_compile_definitions(osal_public_api INTERFACE
     _POSIX_OS_
 )
