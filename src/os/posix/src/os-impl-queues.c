@@ -196,7 +196,7 @@ int32 OS_QueueGet_Impl(const OS_object_token_t *token, void *data, size_t size, 
     impl = OS_OBJECT_TABLE_GET(OS_impl_queue_table, *token);
 
 #ifdef CFE_SIM_STEPPING
-    OS_PosixStepping_Hook_QueueReceive();
+    OS_PosixStepping_Hook_QueueReceive(token, timeout);
 #endif
 
     /*
@@ -277,6 +277,10 @@ int32 OS_QueueGet_Impl(const OS_object_token_t *token, void *data, size_t size, 
         *size_copied = OSAL_SIZE_C(sizeCopied);
         return_code  = OS_SUCCESS;
     }
+
+#ifdef CFE_SIM_STEPPING
+    OS_PosixStepping_Hook_QueueReceive_Complete(token, timeout, return_code);
+#endif
 
     return return_code;
 }

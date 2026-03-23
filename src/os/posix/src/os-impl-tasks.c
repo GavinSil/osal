@@ -731,7 +731,10 @@ int32 OS_TaskDelay_Impl(uint32 millisecond)
     int             status;
 
 #ifdef CFE_SIM_STEPPING
-    OS_PosixStepping_Hook_TaskDelay(millisecond);
+    osal_id_t task_id;
+
+    task_id = OS_TaskGetId_Impl();
+    OS_PosixStepping_Hook_TaskDelay(millisecond, task_id);
 #endif
 
     clock_gettime(CLOCK_MONOTONIC, &sleep_end);
@@ -752,10 +755,16 @@ int32 OS_TaskDelay_Impl(uint32 millisecond)
 
     if (status != 0)
     {
+#ifdef CFE_SIM_STEPPING
+        OS_PosixStepping_Hook_TaskDelay_Complete(millisecond, task_id);
+#endif
         return OS_ERROR;
     }
     else
     {
+#ifdef CFE_SIM_STEPPING
+        OS_PosixStepping_Hook_TaskDelay_Complete(millisecond, task_id);
+#endif
         return OS_SUCCESS;
     }
 }

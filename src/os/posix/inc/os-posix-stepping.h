@@ -35,6 +35,7 @@
  ***************************************************************************************/
 
 #include <stdint.h>
+#include "os-posix.h"
 
 /****************************************************************************************
                             STEPPING HOOK DECLARATIONS
@@ -47,11 +48,14 @@
  * to synchronize deterministic time progression.
  *
  * \param[in]   ms          Number of milliseconds the task is delaying
+ * \param[in]   task_id     触发延时的任务 ID
  *
  * \note This function is declared but implementations are provided only when
  *       CFE_SIM_STEPPING is defined. When not defined, this becomes a no-op.
  */
-void OS_PosixStepping_Hook_TaskDelay(uint32_t ms);
+void OS_PosixStepping_Hook_TaskDelay(uint32_t ms, osal_id_t task_id);
+
+void OS_PosixStepping_Hook_TaskDelay_Complete(uint32_t ms, osal_id_t task_id);
 
 /**
  * \brief Hook called at queue receive boundary
@@ -62,7 +66,9 @@ void OS_PosixStepping_Hook_TaskDelay(uint32_t ms);
  * \note This function is declared but implementations are provided only when
  *       CFE_SIM_STEPPING is defined. When not defined, this becomes a no-op.
  */
-void OS_PosixStepping_Hook_QueueReceive(void);
+void OS_PosixStepping_Hook_QueueReceive(const OS_object_token_t *token, int32 timeout);
+
+void OS_PosixStepping_Hook_QueueReceive_Complete(const OS_object_token_t *token, int32 timeout, int32 return_code);
 
 /**
  * \brief Hook called at binary semaphore take boundary
@@ -73,6 +79,9 @@ void OS_PosixStepping_Hook_QueueReceive(void);
  * \note This function is declared but implementations are provided only when
  *       CFE_SIM_STEPPING is defined. When not defined, this becomes a no-op.
  */
-void OS_PosixStepping_Hook_BinSemTake(void);
+void OS_PosixStepping_Hook_BinSemTake(const OS_object_token_t *token, const struct timespec *timeout);
+
+void OS_PosixStepping_Hook_BinSemTake_Complete(const OS_object_token_t *token, const struct timespec *timeout,
+                                               int32 return_code);
 
 #endif /* OS_POSIX_STEPPING_H */

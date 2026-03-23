@@ -369,7 +369,7 @@ static int32 OS_GenericBinSemTake_Impl(const OS_object_token_t *token, const str
     sem = OS_OBJECT_TABLE_GET(OS_impl_bin_sem_table, *token);
 
 #ifdef CFE_SIM_STEPPING
-    OS_PosixStepping_Hook_BinSemTake();
+    OS_PosixStepping_Hook_BinSemTake(token, timeout);
 #endif
 
     /*
@@ -379,6 +379,9 @@ static int32 OS_GenericBinSemTake_Impl(const OS_object_token_t *token, const str
     /* Lock the mutex ( not the table! ) */
     if (OS_Posix_BinSemAcquireMutex(&sem->id) != OS_SUCCESS)
     {
+#ifdef CFE_SIM_STEPPING
+        OS_PosixStepping_Hook_BinSemTake_Complete(token, timeout, OS_SEM_FAILURE);
+#endif
         return OS_SEM_FAILURE;
     }
 
@@ -438,6 +441,10 @@ static int32 OS_GenericBinSemTake_Impl(const OS_object_token_t *token, const str
      * handles releasing the mutex.
      */
     pthread_cleanup_pop(true);
+
+#ifdef CFE_SIM_STEPPING
+    OS_PosixStepping_Hook_BinSemTake_Complete(token, timeout, return_code);
+#endif
 
     return return_code;
 }

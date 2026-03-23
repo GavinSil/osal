@@ -30,8 +30,14 @@
 #ifdef CFE_SIM_STEPPING
 
 #include <stdint.h>
-#include "cfe_psp_sim_stepping_shim.h"
-#include "cfe_psp_sim_stepping.h"
+#include "os-posix-stepping.h"
+#include "os-shared-idmap.h"
+#include "osapi-idmap.h"
+#include "osapi-task.h"
+#include "esa_stepping_shim.h"
+#include "esa_stepping.h"
+
+extern int32_t ESA_Stepping_Shim_ReportEvent(const ESA_Stepping_ShimEvent_t *event) __attribute__((weak));
 
 /****************************************************************************************
                                   STEPPING HOOK IMPLEMENTATIONS
@@ -45,10 +51,32 @@
  *
  * \param[in]   ms          Number of milliseconds the task is delaying
  */
-void OS_PosixStepping_Hook_TaskDelay(uint32_t ms)
+void OS_PosixStepping_Hook_TaskDelay(uint32_t ms, osal_id_t task_id)
 {
-    /* Stub implementation - no-op */
-    (void)ms;
+    ESA_Stepping_ShimEvent_t event = {0};
+
+    event.event_kind = ESA_SIM_STEPPING_EVENT_TASK_DELAY_ACK;
+    event.task_id = (uint32_t)task_id;
+    event.optional_delay_ms = ms;
+
+    if (ESA_Stepping_Shim_ReportEvent != NULL)
+    {
+        ESA_Stepping_Shim_ReportEvent(&event);
+    }
+}
+
+void OS_PosixStepping_Hook_TaskDelay_Complete(uint32_t ms, osal_id_t task_id)
+{
+    ESA_Stepping_ShimEvent_t event = {0};
+
+    event.event_kind = ESA_SIM_STEPPING_EVENT_TASK_DELAY_COMPLETE;
+    event.task_id = (uint32_t)task_id;
+    event.optional_delay_ms = ms;
+
+    if (ESA_Stepping_Shim_ReportEvent != NULL)
+    {
+        ESA_Stepping_Shim_ReportEvent(&event);
+    }
 }
 
 /**
@@ -57,9 +85,40 @@ void OS_PosixStepping_Hook_TaskDelay(uint32_t ms)
  * Stub implementation that is called when a task attempts to receive a message from a queue.
  * Real implementations can use this to manage message delivery timing in deterministic simulations.
  */
-void OS_PosixStepping_Hook_QueueReceive(void)
+void OS_PosixStepping_Hook_QueueReceive(const OS_object_token_t *token, int32 timeout)
 {
-    /* Stub implementation - no-op */
+    ESA_Stepping_ShimEvent_t event    = {0};
+    osal_id_t                       task_id  = OS_TaskGetId();
+    osal_id_t                       queue_id = OS_ObjectIdFromToken(token);
+
+    event.event_kind         = ESA_SIM_STEPPING_EVENT_QUEUE_RECEIVE_ACK;
+    event.entity_id          = (uint32_t)OS_ObjectIdToInteger(queue_id);
+    event.task_id            = (uint32_t)OS_ObjectIdToInteger(task_id);
+    event.optional_delay_ms  = (uint32_t)timeout;
+
+    if (ESA_Stepping_Shim_ReportEvent != NULL)
+    {
+        ESA_Stepping_Shim_ReportEvent(&event);
+    }
+}
+
+void OS_PosixStepping_Hook_QueueReceive_Complete(const OS_object_token_t *token, int32 timeout, int32 return_code)
+{
+    ESA_Stepping_ShimEvent_t event    = {0};
+    osal_id_t                       task_id  = OS_TaskGetId();
+    osal_id_t                       queue_id = OS_ObjectIdFromToken(token);
+
+    event.event_kind         = ESA_SIM_STEPPING_EVENT_QUEUE_RECEIVE_COMPLETE;
+    event.entity_id          = (uint32_t)OS_ObjectIdToInteger(queue_id);
+    event.task_id            = (uint32_t)OS_ObjectIdToInteger(task_id);
+    event.optional_delay_ms  = (uint32_t)timeout;
+
+    if (ESA_Stepping_Shim_ReportEvent != NULL)
+    {
+        ESA_Stepping_Shim_ReportEvent(&event);
+    }
+
+    (void)return_code;
 }
 
 /**
@@ -68,9 +127,38 @@ void OS_PosixStepping_Hook_QueueReceive(void)
  * Stub implementation that is called when a task attempts to take a binary semaphore.
  * Real implementations can use this to manage synchronization points in deterministic simulations.
  */
-void OS_PosixStepping_Hook_BinSemTake(void)
+void OS_PosixStepping_Hook_BinSemTake(const OS_object_token_t *token, const struct timespec *timeout)
 {
-    /* Stub implementation - no-op */
+    ESA_Stepping_ShimEvent_t event = {0};
+
+    event.event_kind = ESA_SIM_STEPPING_EVENT_BINSEM_TAKE_ACK;
+    event.entity_id  = (uint32_t)OS_ObjectIdToInteger(OS_ObjectIdFromToken(token));
+    event.task_id    = (uint32_t)OS_ObjectIdToInteger(OS_TaskGetId());
+
+    if (ESA_Stepping_Shim_ReportEvent != NULL)
+    {
+        ESA_Stepping_Shim_ReportEvent(&event);
+    }
+
+    (void)timeout;
+}
+
+void OS_PosixStepping_Hook_BinSemTake_Complete(const OS_object_token_t *token, const struct timespec *timeout,
+                                               int32 return_code)
+{
+    ESA_Stepping_ShimEvent_t event = {0};
+
+    event.event_kind = ESA_SIM_STEPPING_EVENT_BINSEM_TAKE_COMPLETE;
+    event.entity_id  = (uint32_t)OS_ObjectIdToInteger(OS_ObjectIdFromToken(token));
+    event.task_id    = (uint32_t)OS_ObjectIdToInteger(OS_TaskGetId());
+
+    if (ESA_Stepping_Shim_ReportEvent != NULL)
+    {
+        ESA_Stepping_Shim_ReportEvent(&event);
+    }
+
+    (void)timeout;
+    (void)return_code;
 }
 
 #endif /* CFE_SIM_STEPPING */
