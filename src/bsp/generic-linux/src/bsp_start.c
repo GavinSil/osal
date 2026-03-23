@@ -230,17 +230,17 @@ int main(int argc, char *argv[])
      */
     OS_BSP_Initialize();
 
-#ifdef CFE_SIM_STEPPING
-    /* Initialize ESA stepping module (core + UDS transport) before OSAL/PSP startup */
-    extern void ESA_Init(void);
-    ESA_Init();
-#endif
-
     /*
      * Call application specific entry point.
      * This should set up all user tasks and resources, then return
      */
     OS_Application_Startup();
+
+#ifdef CFE_SIM_STEPPING
+    /* Initialize ESA stepping module (core + UDS transport) after OS_Application_Startup */
+    extern void ESA_Init(void);
+    ESA_Init();
+#endif
 
     /*
      * OS_Application_Run() implements the background task.
