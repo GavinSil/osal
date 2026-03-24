@@ -34,6 +34,10 @@
 #include "os-impl-tasks.h"
 #include "os-posix-stepping.h"
 
+#ifdef CFE_SIM_STEPPING
+#include "esa_stepping.h"
+#endif
+
 #include "os-shared-task.h"
 #include "os-shared-idmap.h"
 
@@ -735,6 +739,16 @@ int32 OS_TaskDelay_Impl(uint32 millisecond)
 
     task_id = OS_TaskGetId_Impl();
     OS_PosixStepping_Hook_TaskDelay(millisecond, task_id);
+
+    if (ESA_Stepping_Hook_TaskDelayEligible((uint32_t)OS_ObjectIdToInteger(task_id), millisecond))
+    {
+        int32_t wait_status;
+
+        wait_status = ESA_Stepping_WaitForDelayExpiry((uint32_t)OS_ObjectIdToInteger(task_id), millisecond);
+
+        OS_PosixStepping_Hook_TaskDelay_Complete(millisecond, task_id);
+        return (wait_status == 0) ? OS_SUCCESS : OS_ERROR;
+    }
 #endif
 
     clock_gettime(CLOCK_MONOTONIC, &sleep_end);

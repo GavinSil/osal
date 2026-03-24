@@ -401,6 +401,12 @@ include("${OSAL_OS_SOURCE_DIR}/build_options.cmake" OPTIONAL)
 get_target_property(OSAL_PUBLIC_API_COMPILE_DEFINITIONS osal_public_api INTERFACE_COMPILE_DEFINITIONS)
 message(STATUS "OSAL Compile Definitions: ${OSAL_PUBLIC_API_COMPILE_DEFINITIONS}")
 
+# When simulation stepping is enabled, the osal library needs to link with ESA
+# to provide the stepping hook symbols that are called from OSAL code.
+# ESA is added as a core module when CFE_SIM_STEPPING is enabled.
+if (CFE_SIM_STEPPING)
+    target_link_libraries(osal PUBLIC esa)
+endif()
 
 
 #
