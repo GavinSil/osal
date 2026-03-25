@@ -11,3 +11,6 @@ ehthumbs.db
 Thumbs.db
 .fuse_hidden*
 
+# AI agent documentation
+AGENTS.md
+
