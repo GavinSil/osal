@@ -31,6 +31,13 @@
 #include "os-impl-countsem.h"
 #include "os-shared-countsem.h"
 #include "os-shared-idmap.h"
+#include "os-posix-stepping.h"
+
+#ifdef CFE_SIM_STEPPING
+#include "esa_stepping.h"
+#include "esa_wait.h"
+extern bool ESA_Stepping_Hook_IsSessionActive(void);
+#endif
 
 /*
  * Added SEM_VALUE_MAX Define
@@ -127,6 +134,10 @@ int32 OS_CountSemGive_Impl(const OS_object_token_t *token)
         return OS_SEM_FAILURE;
     }
 
+#ifdef CFE_SIM_STEPPING
+    ESA_NotifySemGive(OS_ObjectIdFromToken(token));
+#endif
+
     return OS_SUCCESS;
 }
 
@@ -139,9 +150,64 @@ int32 OS_CountSemGive_Impl(const OS_object_token_t *token)
 int32 OS_CountSemTake_Impl(const OS_object_token_t *token)
 {
     OS_impl_countsem_internal_record_t *impl;
+#ifdef CFE_SIM_STEPPING
+    int32     esa_result;
+    osal_id_t sem_id;
+    bool      use_esa_wait;
+#endif
 
     impl = OS_OBJECT_TABLE_GET(OS_impl_count_sem_table, *token);
 
+#ifdef CFE_SIM_STEPPING
+    /* Check if stepping session is active before using ESA wait */
+    use_esa_wait = ESA_Stepping_Hook_IsSessionActive();
+    
+    if (use_esa_wait)
+    {
+        /* Stepping mode: Non-blocking try → ESA wait → retry loop */
+        while (true)
+        {
+            /* Attempt non-blocking acquire */
+            if (sem_trywait(&impl->id) == 0)
+            {
+                return OS_SUCCESS;
+            }
+
+            /* Handle errno from sem_trywait */
+            if (errno == EINTR)
+            {
+                /* Interrupted by signal, retry immediately */
+                continue;
+            }
+            else if (errno == EAGAIN)
+            {
+                /* Resource not available, wait via ESA */
+                sem_id     = OS_ObjectIdFromToken(token);
+                esa_result = ESA_WaitForSem(sem_id, OS_PEND);
+
+                if (esa_result == ESA_WOKE_BY_RESOURCE)
+                {
+                    /* Woken by resource, retry acquire (another thread may have taken it) */
+                    continue;
+                }
+                else if (esa_result < 0)
+                {
+                    /* ESA wait error */
+                    return OS_SEM_FAILURE;
+                }
+                /* ESA_WOKE_BY_FLUSH also continues loop to retry acquire */
+            }
+            else
+            {
+                /* Other error (EINVAL, etc.) */
+                return OS_SEM_FAILURE;
+            }
+        }
+    }
+    /* Fall through to legacy POSIX path if session not active */
+#endif
+    
+    /* Non-stepping mode or stepping without active session: Traditional blocking wait */
     if (sem_wait(&impl->id) < 0)
     {
         return OS_SEM_FAILURE;
@@ -158,32 +224,96 @@ int32 OS_CountSemTake_Impl(const OS_object_token_t *token)
  *-----------------------------------------------------------------*/
 int32 OS_CountSemTimedWait_Impl(const OS_object_token_t *token, uint32 msecs)
 {
-    struct timespec                     ts;
-    int                                 result;
+#ifdef CFE_SIM_STEPPING
     OS_impl_countsem_internal_record_t *impl;
+    int32                                esa_result;
+    osal_id_t                            sem_id;
+    bool                                 use_esa_wait;
 
     impl = OS_OBJECT_TABLE_GET(OS_impl_count_sem_table, *token);
 
-    /*
-     ** Compute an absolute time for the delay
-     */
-    OS_Posix_CompAbsDelayTime(msecs, &ts);
+    /* Check if stepping session is active before using ESA wait */
+    use_esa_wait = ESA_Stepping_Hook_IsSessionActive();
 
-    if (sem_timedwait(&impl->id, &ts) == 0)
+    if (use_esa_wait)
     {
-        result = OS_SUCCESS;
-    }
-    else if (errno == ETIMEDOUT)
-    {
-        result = OS_SEM_TIMEOUT;
-    }
-    else
-    {
-        /* unspecified failure */
-        result = OS_SEM_FAILURE;
-    }
+        /* Stepping mode: Non-blocking try → ESA timed wait → retry loop */
+        while (true)
+        {
+            /* Attempt non-blocking acquire */
+            if (sem_trywait(&impl->id) == 0)
+            {
+                return OS_SUCCESS;
+            }
 
-    return result;
+            /* Handle errno from sem_trywait */
+            if (errno == EINTR)
+            {
+                /* Interrupted by signal, retry immediately */
+                continue;
+            }
+            else if (errno == EAGAIN)
+            {
+                /* Resource not available, wait via ESA with timeout */
+                sem_id     = OS_ObjectIdFromToken(token);
+                esa_result = ESA_WaitForSem(sem_id, msecs);
+
+                if (esa_result == ESA_WOKE_BY_TIMEOUT)
+                {
+                    /* Timeout expired */
+                    return OS_SEM_TIMEOUT;
+                }
+                else if (esa_result == ESA_WOKE_BY_RESOURCE)
+                {
+                    /* Woken by resource, retry acquire (another thread may have taken it) */
+                    continue;
+                }
+                else if (esa_result < 0)
+                {
+                    /* ESA wait error */
+                    return OS_SEM_FAILURE;
+                }
+                /* ESA_WOKE_BY_FLUSH also continues loop to retry acquire */
+            }
+            else
+            {
+                /* Other error (EINVAL, etc.) */
+                return OS_SEM_FAILURE;
+            }
+        }
+    }
+    /* Fall through to legacy POSIX path if session not active */
+#endif
+    
+    /* Non-stepping mode or stepping without active session: Traditional sem_timedwait with absolute time */
+    {
+        struct timespec                     ts;
+        int                                 result;
+        OS_impl_countsem_internal_record_t *impl;
+
+        impl = OS_OBJECT_TABLE_GET(OS_impl_count_sem_table, *token);
+
+        /*
+         ** Compute an absolute time for the delay
+         */
+        OS_Posix_CompAbsDelayTime(msecs, &ts);
+
+        if (sem_timedwait(&impl->id, &ts) == 0)
+        {
+            result = OS_SUCCESS;
+        }
+        else if (errno == ETIMEDOUT)
+        {
+            result = OS_SEM_TIMEOUT;
+        }
+        else
+        {
+            /* unspecified failure */
+            result = OS_SEM_FAILURE;
+        }
+
+        return result;
+    }
 }
 
 /*----------------------------------------------------------------

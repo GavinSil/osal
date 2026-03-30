@@ -35,6 +35,12 @@
 #include "os-shared-queue.h"
 #include "os-shared-idmap.h"
 
+#ifdef CFE_SIM_STEPPING
+#include "esa_stepping.h"
+#include "esa_wait.h"
+extern bool ESA_Stepping_Hook_IsSessionActive(void);
+#endif
+
 /* Tables where the OS object information is stored */
 OS_impl_queue_internal_record_t OS_impl_queue_table[OS_MAX_QUEUES];
 
@@ -193,6 +199,16 @@ int32 OS_QueueGet_Impl(const OS_object_token_t *token, void *data, size_t size, 
     struct timespec                  ts;
     OS_impl_queue_internal_record_t *impl;
 
+#ifdef CFE_SIM_STEPPING
+    int32     esa_result;
+    osal_id_t queue_id;
+    bool      use_esa_wait;
+    uint32    wait_timeout;
+    uint64    sim_now_ns;
+    uint64    sim_deadline_ns;
+    uint64    sim_remaining_ns;
+#endif
+
     impl = OS_OBJECT_TABLE_GET(OS_impl_queue_table, *token);
 
 #ifdef CFE_SIM_STEPPING
@@ -203,6 +219,93 @@ int32 OS_QueueGet_Impl(const OS_object_token_t *token, void *data, size_t size, 
       ** Read the message queue for data
       */
     sizeCopied = -1;
+
+#ifdef CFE_SIM_STEPPING
+    use_esa_wait = ESA_Stepping_Hook_IsSessionActive();
+
+    if (timeout == OS_CHECK)
+    {
+        use_esa_wait = false;
+    }
+
+    if (use_esa_wait && timeout != OS_PEND)
+    {
+        if (!ESA_Stepping_Hook_GetTime(&sim_now_ns))
+        {
+            use_esa_wait = false;
+        }
+        else
+        {
+            sim_deadline_ns = sim_now_ns + (((uint64)timeout) * 1000000ULL);
+        }
+    }
+
+    if (use_esa_wait)
+    {
+        queue_id = OS_ObjectIdFromToken(token);
+
+        while (true)
+        {
+            do
+            {
+                memset(&ts, 0, sizeof(ts));
+                sizeCopied = mq_timedreceive(impl->id, data, size, NULL, &ts);
+            } while (sizeCopied < 0 && errno == EINTR);
+
+            if (sizeCopied >= 0)
+            {
+                break;
+            }
+
+            if (errno == EMSGSIZE)
+            {
+                break;
+            }
+
+            if (errno != ETIMEDOUT && errno != EAGAIN)
+            {
+                break;
+            }
+
+            if (timeout == OS_PEND)
+            {
+                wait_timeout = (uint32)OS_PEND;
+            }
+            else
+            {
+                if (!ESA_Stepping_Hook_GetTime(&sim_now_ns))
+                {
+                    errno = EIO;
+                    break;
+                }
+
+                if (sim_now_ns >= sim_deadline_ns)
+                {
+                    errno = ETIMEDOUT;
+                    break;
+                }
+
+                sim_remaining_ns = sim_deadline_ns - sim_now_ns;
+                wait_timeout     = (uint32)((sim_remaining_ns + 999999ULL) / 1000000ULL);
+            }
+
+            esa_result = ESA_WaitForMessage(queue_id, wait_timeout);
+
+            if (esa_result == ESA_WOKE_BY_TIMEOUT)
+            {
+                errno = ETIMEDOUT;
+                break;
+            }
+
+            if (esa_result < 0)
+            {
+                errno = EIO;
+                break;
+            }
+        }
+    }
+    else
+#endif
     if (timeout == OS_PEND)
     {
         /*
@@ -317,6 +420,10 @@ int32 OS_QueuePut_Impl(const OS_object_token_t *token, const void *data, size_t 
     if (result == 0)
     {
         return_code = OS_SUCCESS;
+
+#ifdef CFE_SIM_STEPPING
+        ESA_NotifyQueuePut(OS_ObjectIdFromToken(token));
+#endif
     }
     else if (errno == ETIMEDOUT)
     {

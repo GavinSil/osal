@@ -31,6 +31,13 @@
 #include "os-shared-condvar.h"
 #include "os-shared-idmap.h"
 #include "os-impl-condvar.h"
+#include "os-posix-stepping.h"
+
+#ifdef CFE_SIM_STEPPING
+#include "esa_stepping.h"
+#include "esa_wait.h"
+extern bool ESA_Stepping_Hook_IsSessionActive(void);
+#endif
 
 /* Tables where the OS object information is stored */
 OS_impl_condvar_internal_record_t OS_impl_condvar_table[OS_MAX_CONDVARS];
@@ -196,6 +203,11 @@ int32 OS_CondVarSignal_Impl(const OS_object_token_t *token)
         return OS_ERROR;
     }
 
+#ifdef CFE_SIM_STEPPING
+    /* Notify stepping system on successful signal */
+    ESA_NotifyCondVar(OS_ObjectIdFromToken(token), false);
+#endif
+
     return OS_SUCCESS;
 }
 
@@ -218,6 +230,11 @@ int32 OS_CondVarBroadcast_Impl(const OS_object_token_t *token)
         return OS_ERROR;
     }
 
+#ifdef CFE_SIM_STEPPING
+    /* Notify stepping system on successful broadcast */
+    ESA_NotifyCondVar(OS_ObjectIdFromToken(token), true);
+#endif
+
     return OS_SUCCESS;
 }
 
@@ -234,7 +251,68 @@ int32 OS_CondVarWait_Impl(const OS_object_token_t *token)
 
     impl = OS_OBJECT_TABLE_GET(OS_impl_condvar_table, *token);
 
+#ifdef CFE_SIM_STEPPING
+    bool use_esa_wait;
+
     /*
+     * Only use ESA wait path if stepping session is active
+     */
+    use_esa_wait = ESA_Stepping_Hook_IsSessionActive();
+
+    if (use_esa_wait)
+    {
+        int32     return_code;
+        osal_id_t condvar_id;
+        int32     esa_result;
+
+        return_code = OS_SUCCESS;
+
+        /*
+         * ESA stepping mode: use ESA_WaitForCondVar for deterministic waits
+         */
+        while (true)
+        {
+            condvar_id = OS_ObjectIdFromToken(token);
+
+            /*
+             * Release the mutex before calling ESA_WaitForCondVar to avoid deadlock
+             */
+            pthread_mutex_unlock(&impl->mut);
+
+            /*
+             * Use ESA_WaitForCondVar with OS_PEND (infinite wait)
+             */
+            esa_result = ESA_WaitForCondVar(condvar_id, OS_PEND);
+
+            /*
+             * Re-acquire the mutex after waiting
+             */
+            if (pthread_mutex_lock(&impl->mut) != 0)
+            {
+                return_code = OS_ERROR;
+                break;
+            }
+
+            if (esa_result == ESA_WOKE_BY_RESOURCE)
+            {
+                /* Woken by signal/broadcast - return success */
+                break;
+            }
+            else if (esa_result < 0)
+            {
+                return_code = OS_ERROR;
+                break;
+            }
+            /* else: continue waiting */
+        }
+
+        return return_code;
+    }
+    /* Fall through to legacy path if !use_esa_wait */
+#endif
+
+    /*
+     * Legacy POSIX condvar implementation
      * note that because pthread_cond_wait is a cancellation point, this needs to
      * employ the same protection that is in the binsem module.  In the event that
      * the thread is canceled inside pthread_cond_wait, the mutex will be re-acquired
@@ -266,6 +344,99 @@ int32 OS_CondVarTimedWait_Impl(const OS_object_token_t *token, const OS_time_t *
 
     impl = OS_OBJECT_TABLE_GET(OS_impl_condvar_table, *token);
 
+#ifdef CFE_SIM_STEPPING
+    bool use_esa_wait;
+
+    /*
+     * Only use ESA wait path if stepping session is active
+     */
+    use_esa_wait = ESA_Stepping_Hook_IsSessionActive();
+
+    if (use_esa_wait)
+    {
+        int32     return_code;
+        osal_id_t condvar_id;
+        int32     esa_result;
+        uint64    current_sim_time_ns;
+        int64     remaining_ns;
+        uint32    timeout_ms;
+
+        return_code = OS_SUCCESS;
+
+        while (true)
+        {
+            condvar_id = OS_ObjectIdFromToken(token);
+
+            /*
+             * Calculate remaining timeout using simulated time
+             */
+            if (!ESA_Stepping_Hook_GetTime(&current_sim_time_ns))
+            {
+                return_code = OS_ERROR;
+                break;
+            }
+
+            remaining_ns = (int64)(OS_TimeGetTotalSeconds(*abs_wakeup_time) * 1000000000LL +
+                                   OS_TimeGetNanosecondsPart(*abs_wakeup_time)) -
+                           (int64)current_sim_time_ns;
+
+            if (remaining_ns <= 0)
+            {
+                /* Already past deadline */
+                return_code = OS_ERROR_TIMEOUT;
+                break;
+            }
+
+            /*
+             * Convert nanoseconds to milliseconds (round up to avoid premature timeout)
+             */
+            timeout_ms = (uint32)((remaining_ns + 999999) / 1000000);
+
+            /*
+             * Release the mutex before calling ESA_WaitForCondVar to avoid deadlock
+             */
+            pthread_mutex_unlock(&impl->mut);
+
+            /*
+             * Use ESA_WaitForCondVar with calculated timeout
+             */
+            esa_result = ESA_WaitForCondVar(condvar_id, timeout_ms);
+
+            /*
+             * Re-acquire the mutex after waiting
+             */
+            if (pthread_mutex_lock(&impl->mut) != 0)
+            {
+                return_code = OS_ERROR;
+                break;
+            }
+
+            if (esa_result == ESA_WOKE_BY_TIMEOUT)
+            {
+                return_code = OS_ERROR_TIMEOUT;
+                break;
+            }
+            else if (esa_result == ESA_WOKE_BY_RESOURCE)
+            {
+                /* Woken by signal/broadcast - return success */
+                break;
+            }
+            else if (esa_result < 0)
+            {
+                return_code = OS_ERROR;
+                break;
+            }
+            /* else: continue waiting */
+        }
+
+        return return_code;
+    }
+    /* Fall through to legacy path if !use_esa_wait */
+#endif
+
+    /*
+     * Legacy POSIX timedwait implementation
+     */
     limit.tv_sec  = OS_TimeGetTotalSeconds(*abs_wakeup_time);
     limit.tv_nsec = OS_TimeGetNanosecondsPart(*abs_wakeup_time);
 

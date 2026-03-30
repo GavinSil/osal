@@ -35,6 +35,12 @@
 #include "os-impl-binsem.h"
 #include "os-posix-stepping.h"
 
+#ifdef CFE_SIM_STEPPING
+#include "esa_stepping.h"
+#include "esa_wait.h"
+extern bool ESA_Stepping_Hook_IsSessionActive(void);
+#endif
+
 /*
  * This controls the maximum time that the calling thread will wait to
  * acquire the condition mutex before returning an error.
@@ -315,6 +321,10 @@ int32 OS_BinSemGive_Impl(const OS_object_token_t *token)
     /* unblock one thread that is waiting on this sem */
     pthread_cond_signal(&(sem->cv));
 
+#ifdef CFE_SIM_STEPPING
+    ESA_NotifySemGive(OS_ObjectIdFromToken(token));
+#endif
+
     pthread_mutex_unlock(&(sem->id));
 
     return OS_SUCCESS;
@@ -347,6 +357,10 @@ int32 OS_BinSemFlush_Impl(const OS_object_token_t *token)
     /* unblock all threads that are be waiting on this sem */
     pthread_cond_broadcast(&(sem->cv));
 
+#ifdef CFE_SIM_STEPPING
+    ESA_NotifySemFlush(OS_ObjectIdFromToken(token));
+#endif
+
     pthread_mutex_unlock(&(sem->id));
 
     return OS_SUCCESS;
@@ -360,11 +374,21 @@ int32 OS_BinSemFlush_Impl(const OS_object_token_t *token)
             becomes nonzero (via SemGive) or the semaphore gets flushed.
 
 ---------------------------------------------------------------------------------------*/
-static int32 OS_GenericBinSemTake_Impl(const OS_object_token_t *token, const struct timespec *timeout)
+static int32 OS_GenericBinSemTake_Impl(const OS_object_token_t *token, const struct timespec *timeout, uint32 msecs,
+                                       bool is_timed)
 {
     sig_atomic_t                      flush_count;
     int32                             return_code;
     OS_impl_binsem_internal_record_t *sem;
+#ifdef CFE_SIM_STEPPING
+    int32                             esa_result;
+    bool                              use_esa_wait;
+    uint64                            sim_now_ns;
+    uint64                            sim_deadline_ns;
+    uint64                            sim_remaining_ns;
+    uint32                            timeout_ms;
+    osal_id_t                         sem_id;
+#endif
 
     sem = OS_OBJECT_TABLE_GET(OS_impl_bin_sem_table, *token);
 
@@ -385,12 +409,22 @@ static int32 OS_GenericBinSemTake_Impl(const OS_object_token_t *token, const str
         return OS_SEM_FAILURE;
     }
 
-    /* because pthread_cond_wait() is also a cancellation point,
-     * this uses a cleanup handler to ensure that if canceled during this call,
-     * the mutex is also released */
-    pthread_cleanup_push(OS_Posix_BinSemReleaseMutex, &sem->id);
-
     return_code = OS_SUCCESS;
+
+#ifdef CFE_SIM_STEPPING
+    use_esa_wait = ESA_Stepping_Hook_IsSessionActive();
+    if (use_esa_wait && is_timed)
+    {
+        if (!ESA_Stepping_Hook_GetTime(&sim_now_ns))
+        {
+            use_esa_wait = false;
+        }
+        else
+        {
+            sim_deadline_ns = sim_now_ns + (((uint64)msecs) * 1000000ULL);
+        }
+    }
+#endif
 
     /*
      * Note that for vxWorks compatibility, we need to stop pending on the semaphore
@@ -408,6 +442,72 @@ static int32 OS_GenericBinSemTake_Impl(const OS_object_token_t *token, const str
      */
     flush_count = sem->flush_request;
 
+#ifdef CFE_SIM_STEPPING
+    if (use_esa_wait)
+    {
+        while (sem->current_value == 0 && sem->flush_request == flush_count)
+        {
+            if (!is_timed)
+            {
+                timeout_ms = (uint32)OS_PEND;
+            }
+            else
+            {
+                if (!ESA_Stepping_Hook_GetTime(&sim_now_ns))
+                {
+                    return_code = OS_SEM_FAILURE;
+                    break;
+                }
+
+                if (sim_now_ns >= sim_deadline_ns)
+                {
+                    return_code = OS_SEM_TIMEOUT;
+                    break;
+                }
+
+                sim_remaining_ns = sim_deadline_ns - sim_now_ns;
+                timeout_ms       = (uint32)((sim_remaining_ns + 999999ULL) / 1000000ULL);
+            }
+
+            sem_id = OS_ObjectIdFromToken(token);
+            pthread_mutex_unlock(&(sem->id));
+            esa_result = ESA_WaitForSem(sem_id, timeout_ms);
+
+            if (OS_Posix_BinSemAcquireMutex(&(sem->id)) != OS_SUCCESS)
+            {
+                return_code = OS_SEM_FAILURE;
+                OS_PosixStepping_Hook_BinSemTake_Complete(token, timeout, return_code);
+                return return_code;
+            }
+
+            if (esa_result == ESA_WOKE_BY_TIMEOUT)
+            {
+                return_code = OS_SEM_TIMEOUT;
+                break;
+            }
+
+            if (esa_result < 0)
+            {
+                return_code = OS_SEM_FAILURE;
+                break;
+            }
+        }
+
+        if (return_code == OS_SUCCESS && sem->flush_request == flush_count)
+        {
+            sem->current_value = 0;
+        }
+
+        pthread_mutex_unlock(&(sem->id));
+
+        OS_PosixStepping_Hook_BinSemTake_Complete(token, timeout, return_code);
+
+        return return_code;
+    }
+#endif
+
+    pthread_cleanup_push(OS_Posix_BinSemReleaseMutex, &sem->id);
+
     /* Note - the condition must be checked in a while loop because
      * even if pthread_cond_wait() returns, it does NOT guarantee that
      * the condition we are looking for has been met.
@@ -419,7 +519,6 @@ static int32 OS_GenericBinSemTake_Impl(const OS_object_token_t *token, const str
         /* Must pend until something changes */
         if (timeout == NULL)
         {
-            /* wait forever */
             pthread_cond_wait(&(sem->cv), &(sem->id));
         }
         else if (pthread_cond_timedwait(&(sem->cv), &(sem->id), timeout) == ETIMEDOUT)
@@ -435,11 +534,6 @@ static int32 OS_GenericBinSemTake_Impl(const OS_object_token_t *token, const str
         sem->current_value = 0;
     }
 
-    /*
-     * Pop the cleanup handler.
-     * Passing "true" means it will be executed, which
-     * handles releasing the mutex.
-     */
     pthread_cleanup_pop(true);
 
 #ifdef CFE_SIM_STEPPING
@@ -457,7 +551,7 @@ static int32 OS_GenericBinSemTake_Impl(const OS_object_token_t *token, const str
  *-----------------------------------------------------------------*/
 int32 OS_BinSemTake_Impl(const OS_object_token_t *token)
 {
-    return (OS_GenericBinSemTake_Impl(token, NULL));
+    return (OS_GenericBinSemTake_Impl(token, NULL, 0, false));
 }
 
 /*----------------------------------------------------------------
@@ -468,14 +562,9 @@ int32 OS_BinSemTake_Impl(const OS_object_token_t *token)
  *-----------------------------------------------------------------*/
 int32 OS_BinSemTimedWait_Impl(const OS_object_token_t *token, uint32 msecs)
 {
-    struct timespec ts;
-
-    /*
-     ** Compute an absolute time for the delay
-     */
+    struct timespec                   ts;
     OS_Posix_CompAbsDelayTime(msecs, &ts);
-
-    return (OS_GenericBinSemTake_Impl(token, &ts));
+    return (OS_GenericBinSemTake_Impl(token, &ts, msecs, true));
 }
 
 /*----------------------------------------------------------------

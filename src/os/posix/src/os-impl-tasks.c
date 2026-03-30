@@ -36,6 +36,8 @@
 
 #ifdef CFE_SIM_STEPPING
 #include "esa_stepping.h"
+#include "esa_wait.h"
+extern bool ESA_Stepping_Hook_IsSessionActive(void);
 #endif
 
 #include "os-shared-task.h"
@@ -742,12 +744,12 @@ int32 OS_TaskDelay_Impl(uint32 millisecond)
 
     if (ESA_Stepping_Hook_TaskDelayEligible((uint32_t)OS_ObjectIdToInteger(task_id), millisecond))
     {
-        int32_t wait_status;
+        int32 wait_status;
 
-        wait_status = ESA_Stepping_WaitForDelayExpiry((uint32_t)OS_ObjectIdToInteger(task_id), millisecond);
+        wait_status = ESA_WaitForDelay(millisecond);
 
         OS_PosixStepping_Hook_TaskDelay_Complete(millisecond, task_id);
-        return (wait_status == 0) ? OS_SUCCESS : OS_ERROR;
+        return (wait_status >= 0) ? OS_SUCCESS : OS_ERROR;
     }
 #endif
 
