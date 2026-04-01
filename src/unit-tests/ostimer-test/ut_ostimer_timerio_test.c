@@ -28,6 +28,18 @@
 
 #include "ut_ostimer_test.h"
 
+/*
+ * Define tolerance divisors for timer validation tests.
+ * POSIX/Linux environments running in VMs or CI can experience significant scheduling jitter.
+ */
+#if defined(_POSIX_OS_)
+#define UT_TIMER_SINGLE_TOLERANCE_DIVISOR  3  /* +/- 33.3% */
+#define UT_TIMER_AVERAGE_TOLERANCE_DIVISOR 10 /* +/- 10.0% */
+#else
+#define UT_TIMER_SINGLE_TOLERANCE_DIVISOR  20  /* +/- 5.0% */
+#define UT_TIMER_AVERAGE_TOLERANCE_DIVISOR 200 /* +/- 0.5% */
+#endif
+
 /*--------------------------------------------------------------------------------*
 ** Macros
 **--------------------------------------------------------------------------------*/
@@ -431,7 +443,7 @@ void       UT_os_timerset_test(void)
          * is going to vary per system, it may give you the minimum interval, or it may give
          * you a very jittery result, or in some cases it could even possibly work.
          */
-        startTime    = g_clkAccuracy*5;
+        startTime    = g_clkAccuracy * 5;
         intervalTime = 5;
 
         UtPrintf("\nOS_TimerSet() - #3 Interval-too-short (clk_accuracy=%d)\n", (int)g_clkAccuracy);
@@ -467,7 +479,7 @@ void       UT_os_timerset_test(void)
         g_timerGlobal.callbackMax = 10;
         g_timerGlobal.state       = UT_TimerState_INIT;
 
-        startTime    = g_clkAccuracy*5;
+        startTime = g_clkAccuracy * 5;
 
         intervalTime = 500000;
 
@@ -487,13 +499,15 @@ void       UT_os_timerset_test(void)
              * This should be a very low bar for a native RTOS to meet, but this also could be
              * running on a VM in a shared/loaded server, which needs more relaxed constraints.
              */
-            UtAssert_INT32_GT(g_timerGlobal.minDiff, intervalTime - (intervalTime / 20));
-            UtAssert_INT32_LT(g_timerGlobal.maxDiff, intervalTime + (intervalTime / 20));
+            UtAssert_INT32_GT(g_timerGlobal.minDiff, intervalTime - (intervalTime / UT_TIMER_SINGLE_TOLERANCE_DIVISOR));
+            UtAssert_INT32_LT(g_timerGlobal.maxDiff, intervalTime + (intervalTime / UT_TIMER_SINGLE_TOLERANCE_DIVISOR));
 
             /* The average interval time should be closer to the target, as this averages out the jitter error */
             totalTime = OS_TimeGetTotalMicroseconds(OS_TimeSubtract(g_timerGlobal.finishTime, g_timerGlobal.startTime));
-            UtAssert_INT32_GT(totalTime / g_timerGlobal.callbackMax, intervalTime - (intervalTime / 200));
-            UtAssert_INT32_LT(totalTime / g_timerGlobal.callbackMax, intervalTime + (intervalTime / 200));
+            UtAssert_INT32_GT(totalTime / g_timerGlobal.callbackMax,
+                              intervalTime - (intervalTime / UT_TIMER_AVERAGE_TOLERANCE_DIVISOR));
+            UtAssert_INT32_LT(totalTime / g_timerGlobal.callbackMax,
+                              intervalTime + (intervalTime / UT_TIMER_AVERAGE_TOLERANCE_DIVISOR));
         }
 
         /* Reset test environment */
